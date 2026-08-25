@@ -111,43 +111,46 @@ async function startServer() {
       const filename = `${cleanTitle}${format ? `_${format}` : ''}.${fileExt}`;
       const safeAscii = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
 
-      // 1. Direct stream URL provided (e.g. TikTok CDN stream)
-      if (streamUrl && streamUrl.startsWith('http')) {
+      const sendStreamToClient = async (directMediaUrl: string) => {
         try {
-          const fetchStream = await fetch(streamUrl, {
+          const cdnStream = await fetch(directMediaUrl, {
             headers: {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
               Referer: 'https://www.tiktok.com/',
             },
           });
 
-          if (fetchStream.ok && fetchStream.body) {
-            res.setHeader('Access-Control-Allow-Origin', '*');
-            res.setHeader('Content-Type', type === 'audio' ? 'audio/mpeg' : 'video/mp4');
-            res.setHeader('Content-Disposition', `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
-            const contentLength = fetchStream.headers.get('content-length');
-            if (contentLength) res.setHeader('Content-Length', contentLength);
-
-            const reader = fetchStream.body.getReader();
-            const pump = async () => {
-              const { done, value } = await reader.read();
-              if (done) {
-                res.end();
-                return;
-              }
-              res.write(value);
-              await pump();
-            };
-            await pump();
-            return;
+          if (cdnStream.ok) {
+            const arrayBuf = await cdnStream.arrayBuffer();
+            const buffer = Buffer.from(arrayBuf);
+            if (buffer.length > 500) {
+              res.setHeader('Access-Control-Allow-Origin', '*');
+              res.setHeader('Content-Type', type === 'audio' ? 'audio/mpeg' : 'video/mp4');
+              res.setHeader('Content-Disposition', `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+              res.setHeader('Content-Length', String(buffer.length));
+              res.end(buffer);
+              return true;
+            }
           }
+        } catch (fetchErr) {
+          console.log('sendStreamToClient fetch error:', fetchErr);
+        }
+        return false;
+      };
+
+      // 1. Direct stream URL provided (e.g. TikTok CDN stream)
+      if (streamUrl && streamUrl.startsWith('http')) {
+        try {
+          const success = await sendStreamToClient(streamUrl);
+          if (success) return;
         } catch (streamErr) {
           console.log('Direct stream fetch error:', streamErr);
         }
       }
 
-      // 2. If it is a TikTok URL, attempt real-time TikTok direct CDN resolution
+      // 2. If it is a TikTok URL, attempt multi-resolver TikTok direct CDN resolution
       if (url && (url.includes('tiktok.com') || url.includes('douyin.com'))) {
+        // Resolver A: TikWM
         try {
           const tikRes = await fetch('https://www.tikwm.com/api/', {
             method: 'POST',
@@ -160,45 +163,40 @@ async function startServer() {
           });
 
           if (tikRes.ok) {
-            const tikData = await tikRes.json();
+            const tikData = (await tikRes.json()) as any;
             if (tikData && tikData.code === 0 && tikData.data) {
               const directMediaUrl = type === 'audio'
                 ? (tikData.data.music || tikData.data.music_info?.play)
                 : (tikData.data.hdplay || tikData.data.play);
 
               if (directMediaUrl && directMediaUrl.startsWith('http')) {
-                const cdnStream = await fetch(directMediaUrl, {
-                  headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                    Referer: 'https://www.tiktok.com/',
-                  },
-                });
-
-                if (cdnStream.ok && cdnStream.body) {
-                  res.setHeader('Access-Control-Allow-Origin', '*');
-                  res.setHeader('Content-Type', type === 'audio' ? 'audio/mpeg' : 'video/mp4');
-                  res.setHeader('Content-Disposition', `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
-                  const contentLength = cdnStream.headers.get('content-length');
-                  if (contentLength) res.setHeader('Content-Length', contentLength);
-
-                  const reader = cdnStream.body.getReader();
-                  const pump = async () => {
-                    const { done, value } = await reader.read();
-                    if (done) {
-                      res.end();
-                      return;
-                    }
-                    res.write(value);
-                    await pump();
-                  };
-                  await pump();
-                  return;
-                }
+                const success = await sendStreamToClient(directMediaUrl);
+                if (success) return;
               }
             }
           }
         } catch (tikErr) {
-          console.log('TikTok dynamic resolution error:', tikErr);
+          console.log('TikWM dynamic resolution error:', tikErr);
+        }
+
+        // Resolver B: Tiklydown
+        try {
+          const tdRes = await fetch(`https://api.tiklydown.eu.org/api/download?url=${encodeURIComponent(url)}`, {
+            headers: { 'User-Agent': 'Mozilla/5.0' },
+            signal: AbortSignal.timeout(5000),
+          });
+          if (tdRes.ok) {
+            const tdData = (await tdRes.json()) as any;
+            const directUrl = type === 'audio'
+              ? (tdData.music?.play_url || tdData.music)
+              : (tdData.video?.noWatermark || tdData.video?.watermark);
+            if (directUrl && typeof directUrl === 'string' && directUrl.startsWith('http')) {
+              const success = await sendStreamToClient(directUrl);
+              if (success) return;
+            }
+          }
+        } catch (tdErr) {
+          console.log('Tiklydown fallback error:', tdErr);
         }
       }
 
