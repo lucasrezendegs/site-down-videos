@@ -233,67 +233,73 @@ export default function App() {
     showToast(`Legendas atualizadas para ${langLabel}.`);
   };
 
-  // Trigger file download reliably via Blob in browser
+  // Trigger file download reliably
   const triggerDownloadFile = async (
     downloadUrl: string,
     defaultFilename: string,
     successMessage: string,
-    mediaType: 'audio' | 'video' = 'audio',
+    mediaType: 'audio' | 'video' = 'video',
     title: string = 'media'
   ) => {
     try {
-      showToast('Processando e preparando arquivo...');
+      showToast('Iniciando processamento do arquivo...');
 
       let blob: Blob | null = null;
 
-      // Try fetching from server
+      // Try fetching from server stream
       try {
         const response = await fetch(downloadUrl);
-        if (response.ok) {
-          blob = await response.blob();
+        const contentType = response.headers.get('content-type') || '';
+        if (response.ok && (contentType.includes('video') || contentType.includes('audio') || contentType.includes('octet-stream'))) {
+          const fetchedBlob = await response.blob();
+          if (fetchedBlob.size > 20000) {
+            blob = fetchedBlob;
+          }
         }
       } catch (netErr) {
-        console.warn('Network fetch fallback to client synthesis:', netErr);
+        console.warn('Direct server fetch unavailable:', netErr);
       }
 
-      // If server failed or empty blob, generate valid client-side media
-      if (!blob || blob.size < 50) {
-        if (mediaType === 'audio') {
-          blob = generateClientAudioBlob(10, title);
-        } else {
-          blob = await generateClientVideoBlob(5, title);
-        }
+      if (blob) {
+        const blobUrl = window.URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = blobUrl;
+        link.download = defaultFilename;
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+
+        setTimeout(() => {
+          try {
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(blobUrl);
+          } catch {
+            // ignore
+          }
+        }, 5000);
+
+        showToast(successMessage);
+      } else {
+        // Direct mirror download fallback
+        const isYouTube = videoInfo?.platform === 'youtube';
+        const fallbackUrl = isYouTube
+          ? (mediaType === 'audio'
+              ? `https://tomp3.cc/youtube-to-mp3/${videoInfo?.id}`
+              : `https://www.ssyoutube.com/watch?v=${videoInfo?.id}`)
+          : (mediaType === 'audio' ? `https://ssstik.io/pt` : `https://snaptik.app/`);
+
+        const link = document.createElement('a');
+        link.href = fallbackUrl;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        showToast('Abrindo servidor de download direto com o arquivo original...');
       }
-
-      const blobUrl = window.URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = blobUrl;
-      link.download = defaultFilename;
-      link.style.display = 'none';
-      document.body.appendChild(link);
-      link.click();
-
-      setTimeout(() => {
-        try {
-          document.body.removeChild(link);
-          window.URL.revokeObjectURL(blobUrl);
-        } catch {
-          // ignore
-        }
-      }, 5000);
-
-      showToast(successMessage);
     } catch (err) {
-      console.warn('Download error:', err);
-      // Final Fallback: direct anchor link
-      const link = document.createElement('a');
-      link.href = downloadUrl;
-      link.download = defaultFilename;
-      link.target = '_blank';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      showToast(successMessage);
+      console.warn('Download handler error:', err);
+      showToast('Abrindo link direto de download...');
     }
   };
 

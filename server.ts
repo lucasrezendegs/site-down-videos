@@ -97,12 +97,11 @@ async function startServer() {
     }
   });
 
-  // API: Download Proxy & Stream handler with standard Content-Disposition headers and ffmpeg generation
+  // API: Download Proxy & Stream handler with standard Content-Disposition headers
   app.get('/api/download', async (req: Request, res: Response) => {
     try {
       const { url, streamUrl, format, type = 'video', ext, title = 'clipflow_media' } = req.query as Record<string, string>;
 
-      // Clean filename for download
       const cleanTitle = (title || 'video')
         .replace(/[/\\?%*:|"<>]/g, '')
         .trim()
@@ -111,11 +110,6 @@ async function startServer() {
       const fileExt = ext || (type === 'audio' ? 'mp3' : 'mp4');
       const filename = `${cleanTitle}${format ? `_${format}` : ''}.${fileExt}`;
       const safeAscii = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-
-      // CORS & standard attachment headers
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Expose-Headers', 'Content-Disposition, Content-Length, Content-Type');
-      res.setHeader('Content-Disposition', `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
 
       // 1. Direct stream URL (e.g. from TikTok CDN)
       if (streamUrl && streamUrl.startsWith('http')) {
@@ -128,7 +122,9 @@ async function startServer() {
           });
 
           if (fetchStream.ok && fetchStream.body) {
+            res.setHeader('Access-Control-Allow-Origin', '*');
             res.setHeader('Content-Type', type === 'audio' ? 'audio/mpeg' : 'video/mp4');
+            res.setHeader('Content-Disposition', `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
             const contentLength = fetchStream.headers.get('content-length');
             if (contentLength) res.setHeader('Content-Length', contentLength);
 
@@ -146,108 +142,56 @@ async function startServer() {
             return;
           }
         } catch (streamErr) {
-          console.log('Direct stream fallback triggered:', streamErr);
+          console.log('Direct stream fetch error:', streamErr);
         }
       }
 
-      // 2. Generate playable MP3 Audio via FFmpeg in memory
-      if (type === 'audio' || fileExt === 'mp3' || fileExt === 'm4a') {
-        const bitrate = format === '320k' ? '320k' : format === '256k' ? '256k' : format === '192k' ? '192k' : '128k';
+      // 2. If running locally with yt-dlp available, stream genuine media
+      if (url && url.startsWith('http')) {
+        try {
+          const ytdlpArgs = type === 'audio'
+            ? ['-o', '-', '-x', '--audio-format', 'mp3', url]
+            : ['-o', '-', '-f', 'best[ext=mp4]/best', url];
 
-        const ffmpegArgs = [
-          '-f', 'lavfi',
-          '-i', 'sine=frequency=432:duration=10',
-          '-b:a', bitrate,
-          '-metadata', `title=${cleanTitle}`,
-          '-metadata', 'artist=ClipFlow Media Studio',
-          '-f', 'mp3',
-          'pipe:1',
-        ];
+          const ytdlp = spawn('yt-dlp', ytdlpArgs);
+          let hasOutput = false;
 
-        const ffmpeg = spawn('ffmpeg', ffmpegArgs);
-        const chunks: Buffer[] = [];
+          ytdlp.stdout.once('data', () => {
+            hasOutput = true;
+            res.setHeader('Access-Control-Allow-Origin', '*');
+            res.setHeader('Content-Type', type === 'audio' ? 'audio/mpeg' : 'video/mp4');
+            res.setHeader('Content-Disposition', `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+          });
 
-        ffmpeg.stdout.on('data', (c) => chunks.push(c));
-        ffmpeg.stderr.on('data', () => {});
+          ytdlp.stdout.pipe(res);
 
-        ffmpeg.on('close', (code) => {
-          if (code === 0 && chunks.length > 0) {
-            const buf = Buffer.concat(chunks);
-            res.setHeader('Content-Type', 'audio/mpeg');
-            res.setHeader('Content-Length', String(buf.length));
-            res.end(buf);
-          } else {
-            // Fallback wav / audio payload
-            const fallbackBuf = Buffer.from('ClipFlow MP3 Audio Export');
-            res.setHeader('Content-Type', 'audio/mpeg');
-            res.setHeader('Content-Length', String(fallbackBuf.length));
-            res.end(fallbackBuf);
-          }
-        });
+          ytdlp.on('error', () => {
+            if (!hasOutput && !res.headersSent) {
+              // Redirect to verified converter mirror
+              const isYouTube = url.includes('youtu');
+              const redirectUrl = isYouTube
+                ? (type === 'audio' ? `https://tomp3.cc/youtube-to-mp3/${encodeURIComponent(url)}` : `https://www.ssyoutube.com/watch?v=${encodeURIComponent(url)}`)
+                : `https://ssstik.io/pt`;
+              res.redirect(302, redirectUrl);
+            }
+          });
 
-        ffmpeg.on('error', (err) => {
-          console.error('FFmpeg audio error:', err);
-          const fallbackBuf = Buffer.from('ClipFlow MP3 Audio Export');
-          res.setHeader('Content-Type', 'audio/mpeg');
-          res.setHeader('Content-Length', String(fallbackBuf.length));
-          res.end(fallbackBuf);
-        });
-
-        req.on('close', () => {
-          ffmpeg.kill('SIGKILL');
-        });
-        return;
+          req.on('close', () => {
+            ytdlp.kill('SIGKILL');
+          });
+          return;
+        } catch (spawnErr) {
+          console.log('yt-dlp spawn attempt failed:', spawnErr);
+        }
       }
 
-      // 3. Generate playable MP4 Video via FFmpeg in memory
-      const resolution = format === '4k' ? '1920x1080' : format === '1440p' ? '1920x1080' : format === '1080p' ? '1920x1080' : '1280x720';
+      // 3. Fallback redirect to direct high-speed converter
+      const isYouTube = url ? url.includes('youtu') : false;
+      const redirectUrl = isYouTube
+        ? (type === 'audio' ? `https://tomp3.cc/youtube-to-mp3/${encodeURIComponent(url || '')}` : `https://www.ssyoutube.com/watch?v=${encodeURIComponent(url || '')}`)
+        : `https://ssstik.io/pt`;
 
-      const ffmpegVideoArgs = [
-        '-f', 'lavfi',
-        '-i', `color=c=0x0f172a:s=${resolution}:d=6`,
-        '-f', 'lavfi',
-        '-i', 'sine=frequency=440:duration=6',
-        '-c:v', 'libx264',
-        '-tune', 'stillimage',
-        '-pix_fmt', 'yuv420p',
-        '-c:a', 'aac',
-        '-b:a', '192k',
-        '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
-        '-f', 'mp4',
-        'pipe:1',
-      ];
-
-      const ffmpegVid = spawn('ffmpeg', ffmpegVideoArgs);
-      const vidChunks: Buffer[] = [];
-
-      ffmpegVid.stdout.on('data', (c) => vidChunks.push(c));
-      ffmpegVid.stderr.on('data', () => {});
-
-      ffmpegVid.on('close', (code) => {
-        if (code === 0 && vidChunks.length > 0) {
-          const buf = Buffer.concat(vidChunks);
-          res.setHeader('Content-Type', 'video/mp4');
-          res.setHeader('Content-Length', String(buf.length));
-          res.end(buf);
-        } else {
-          const fallbackBuf = Buffer.from('ClipFlow MP4 Video Export');
-          res.setHeader('Content-Type', 'video/mp4');
-          res.setHeader('Content-Length', String(fallbackBuf.length));
-          res.end(fallbackBuf);
-        }
-      });
-
-      ffmpegVid.on('error', (err) => {
-        console.error('FFmpeg video error:', err);
-        const fallbackBuf = Buffer.from('ClipFlow MP4 Video Export');
-        res.setHeader('Content-Type', 'video/mp4');
-        res.setHeader('Content-Length', String(fallbackBuf.length));
-        res.end(fallbackBuf);
-      });
-
-      req.on('close', () => {
-        ffmpegVid.kill('SIGKILL');
-      });
+      res.redirect(302, redirectUrl);
     } catch (err) {
       console.error('Download error:', err);
       if (!res.headersSent) {
