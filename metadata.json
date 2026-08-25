@@ -1,0 +1,6 @@
+{
+  "name": "ClipFlow - Downloader de Vídeos & Transcrição SRT",
+  "description": "Baixe vídeos e áudios do YouTube e TikTok em alta resolução e MP3, com transcrição completa e legendas em formato SRT.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
