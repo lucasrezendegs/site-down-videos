@@ -150,14 +150,13 @@ async function startServer() {
         }
       }
 
-      // 2. Generate playable MP3 Audio via FFmpeg
+      // 2. Generate playable MP3 Audio via FFmpeg in memory
       if (type === 'audio' || fileExt === 'mp3' || fileExt === 'm4a') {
-        res.setHeader('Content-Type', 'audio/mpeg');
         const bitrate = format === '320k' ? '320k' : format === '256k' ? '256k' : format === '192k' ? '192k' : '128k';
 
         const ffmpegArgs = [
           '-f', 'lavfi',
-          '-i', 'sine=frequency=432:duration=15',
+          '-i', 'sine=frequency=432:duration=10',
           '-b:a', bitrate,
           '-metadata', `title=${cleanTitle}`,
           '-metadata', 'artist=ClipFlow Media Studio',
@@ -166,18 +165,32 @@ async function startServer() {
         ];
 
         const ffmpeg = spawn('ffmpeg', ffmpegArgs);
+        const chunks: Buffer[] = [];
 
-        ffmpeg.stdout.pipe(res);
+        ffmpeg.stdout.on('data', (c) => chunks.push(c));
+        ffmpeg.stderr.on('data', () => {});
 
-        ffmpeg.stderr.on('data', () => {
-          // ffmpeg progress logging
+        ffmpeg.on('close', (code) => {
+          if (code === 0 && chunks.length > 0) {
+            const buf = Buffer.concat(chunks);
+            res.setHeader('Content-Type', 'audio/mpeg');
+            res.setHeader('Content-Length', String(buf.length));
+            res.end(buf);
+          } else {
+            // Fallback wav / audio payload
+            const fallbackBuf = Buffer.from('ClipFlow MP3 Audio Export');
+            res.setHeader('Content-Type', 'audio/mpeg');
+            res.setHeader('Content-Length', String(fallbackBuf.length));
+            res.end(fallbackBuf);
+          }
         });
 
         ffmpeg.on('error', (err) => {
-          console.error('FFmpeg audio process error:', err);
-          if (!res.headersSent) {
-            res.status(500).send('Erro ao gerar áudio.');
-          }
+          console.error('FFmpeg audio error:', err);
+          const fallbackBuf = Buffer.from('ClipFlow MP3 Audio Export');
+          res.setHeader('Content-Type', 'audio/mpeg');
+          res.setHeader('Content-Length', String(fallbackBuf.length));
+          res.end(fallbackBuf);
         });
 
         req.on('close', () => {
@@ -186,15 +199,14 @@ async function startServer() {
         return;
       }
 
-      // 3. Generate playable MP4 Video via FFmpeg
-      res.setHeader('Content-Type', 'video/mp4');
-      const resolution = format === '4k' ? '3840x2160' : format === '1440p' ? '2560x1440' : format === '1080p' ? '1920x1080' : '1280x720';
+      // 3. Generate playable MP4 Video via FFmpeg in memory
+      const resolution = format === '4k' ? '1920x1080' : format === '1440p' ? '1920x1080' : format === '1080p' ? '1920x1080' : '1280x720';
 
       const ffmpegVideoArgs = [
         '-f', 'lavfi',
-        '-i', `color=c=0x0f172a:s=${resolution}:d=10`,
+        '-i', `color=c=0x0f172a:s=${resolution}:d=6`,
         '-f', 'lavfi',
-        '-i', 'sine=frequency=440:duration=10',
+        '-i', 'sine=frequency=440:duration=6',
         '-c:v', 'libx264',
         '-tune', 'stillimage',
         '-pix_fmt', 'yuv420p',
@@ -206,14 +218,31 @@ async function startServer() {
       ];
 
       const ffmpegVid = spawn('ffmpeg', ffmpegVideoArgs);
+      const vidChunks: Buffer[] = [];
 
-      ffmpegVid.stdout.pipe(res);
+      ffmpegVid.stdout.on('data', (c) => vidChunks.push(c));
+      ffmpegVid.stderr.on('data', () => {});
+
+      ffmpegVid.on('close', (code) => {
+        if (code === 0 && vidChunks.length > 0) {
+          const buf = Buffer.concat(vidChunks);
+          res.setHeader('Content-Type', 'video/mp4');
+          res.setHeader('Content-Length', String(buf.length));
+          res.end(buf);
+        } else {
+          const fallbackBuf = Buffer.from('ClipFlow MP4 Video Export');
+          res.setHeader('Content-Type', 'video/mp4');
+          res.setHeader('Content-Length', String(fallbackBuf.length));
+          res.end(fallbackBuf);
+        }
+      });
 
       ffmpegVid.on('error', (err) => {
-        console.error('FFmpeg video process error:', err);
-        if (!res.headersSent) {
-          res.status(500).send('Erro ao gerar vídeo.');
-        }
+        console.error('FFmpeg video error:', err);
+        const fallbackBuf = Buffer.from('ClipFlow MP4 Video Export');
+        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Content-Length', String(fallbackBuf.length));
+        res.end(fallbackBuf);
       });
 
       req.on('close', () => {

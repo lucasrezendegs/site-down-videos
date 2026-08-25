@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Music, Download, Check, Volume2, Play, Pause, Disc, Sparkles, Sliders, Radio } from 'lucide-react';
 import { VideoInfo, AudioFormat } from '../types';
+import { playCinematicAudioPreview, stopAudioPreview } from '../utils/clientAudio';
 
 interface AudioConversionTabProps {
   video: VideoInfo;
@@ -12,6 +13,12 @@ export const AudioConversionTab: React.FC<AudioConversionTabProps> = ({ video, o
   const [isPlayingAudio, setIsPlayingAudio] = useState<boolean>(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
   const [downloadedIds, setDownloadedIds] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    return () => {
+      stopAudioPreview();
+    };
+  }, []);
 
   const activeFormat =
     video.audioFormats.find((f) => f.bitrate === selectedBitrate) || video.audioFormats[0];
@@ -27,7 +34,18 @@ export const AudioConversionTab: React.FC<AudioConversionTabProps> = ({ video, o
   };
 
   const togglePlayAudio = () => {
-    setIsPlayingAudio(!isPlayingAudio);
+    if (isPlayingAudio) {
+      stopAudioPreview();
+      setIsPlayingAudio(false);
+    } else {
+      setIsPlayingAudio(true);
+      playCinematicAudioPreview(
+        () => {},
+        () => {
+          setIsPlayingAudio(false);
+        }
+      );
+    }
   };
 
   return (
