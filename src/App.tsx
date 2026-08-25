@@ -107,7 +107,19 @@ export default function App() {
         body: JSON.stringify({ url: inputUrl.trim() }),
       });
 
-      const data = await response.json();
+      const contentType = response.headers.get('content-type');
+      let data: any = {};
+
+      if (contentType && contentType.includes('application/json')) {
+        data = await response.json();
+      } else {
+        const text = await response.text();
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = { error: 'O servidor não pôde processar o link. Verifique se o vídeo existe e tente novamente.' };
+        }
+      }
 
       if (!response.ok) {
         throw new Error(data.error || 'Falha ao analisar o link do vídeo.');
@@ -117,8 +129,8 @@ export default function App() {
       // Auto-load transcript
       fetchTranscriptData(data, 'pt');
     } catch (err: any) {
-      console.error(err);
-      setErrorMessage(err.message || 'Erro de conexão com o servidor. Tente novamente.');
+      console.error('Error analyzing URL:', err);
+      setErrorMessage(err.message || 'Erro ao processar este link. Verifique se o vídeo é público e tente novamente.');
     } finally {
       setIsLoading(false);
     }
@@ -133,7 +145,9 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ videoInfo: infoToUse, language }),
       });
-      if (res.ok) {
+
+      const contentType = res.headers.get('content-type');
+      if (res.ok && contentType && contentType.includes('application/json')) {
         const tData = await res.json();
         setTranscript(tData);
       }
@@ -158,7 +172,8 @@ export default function App() {
         }),
       });
 
-      if (res.ok) {
+      const contentType = res.headers.get('content-type');
+      if (res.ok && contentType && contentType.includes('application/json')) {
         const transData = await res.json();
         setTranscript((prev) => {
           if (!prev) return null;
@@ -172,6 +187,8 @@ export default function App() {
           };
         });
         showToast('Legendas traduzidas com sucesso no padrão .SRT!');
+      } else {
+        showToast('Não foi possível traduzir as legendas no momento.');
       }
     } catch (err) {
       console.error('Translation error:', err);

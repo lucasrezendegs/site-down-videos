@@ -41,6 +41,29 @@ export function segmentsToVtt(segments: TranscriptSegment[]): string {
   return `WEBVTT\n\n${body}`;
 }
 
+// Safe fetch JSON helper that never crashes on HTML error responses
+async function safeFetchJson<T = any>(url: string, options: RequestInit = {}): Promise<T | null> {
+  try {
+    const res = await fetch(url, {
+      ...options,
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        Accept: 'application/json, text/plain, */*',
+        ...(options.headers || {}),
+      },
+    });
+    if (!res.ok) return null;
+    const text = await res.text();
+    if (!text || (!text.trim().startsWith('{') && !text.trim().startsWith('['))) {
+      return null;
+    }
+    return JSON.parse(text) as T;
+  } catch (err) {
+    return null;
+  }
+}
+
 export function detectPlatform(url: string): 'youtube' | 'tiktok' | 'unknown' {
   const cleanUrl = url.trim().toLowerCase();
   if (
@@ -61,23 +84,37 @@ export function detectPlatform(url: string): 'youtube' | 'tiktok' | 'unknown' {
 
 export function extractYouTubeId(url: string): string | null {
   try {
-    const parsed = new URL(url);
+    const trimmed = url.trim();
+    if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) {
+      return trimmed;
+    }
+    const parsed = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`);
     if (parsed.hostname.includes('youtu.be')) {
-      return parsed.pathname.slice(1).split('?')[0];
+      const id = parsed.pathname.replace(/^\/+/, '').split('/')[0].split('?')[0];
+      if (id && id.length >= 10) return id.slice(0, 11);
     }
     if (parsed.pathname.includes('/shorts/')) {
       const parts = parsed.pathname.split('/shorts/');
-      return parts[1]?.split('?')[0] || null;
+      const id = parts[1]?.split('/')[0]?.split('?')[0];
+      if (id) return id.slice(0, 11);
+    }
+    if (parsed.pathname.includes('/live/')) {
+      const parts = parsed.pathname.split('/live/');
+      const id = parts[1]?.split('/')[0]?.split('?')[0];
+      if (id) return id.slice(0, 11);
     }
     if (parsed.pathname.includes('/embed/')) {
       const parts = parsed.pathname.split('/embed/');
-      return parts[1]?.split('?')[0] || null;
+      const id = parts[1]?.split('/')[0]?.split('?')[0];
+      if (id) return id.slice(0, 11);
     }
-    return parsed.searchParams.get('v');
+    const vParam = parsed.searchParams.get('v');
+    if (vParam) return vParam.slice(0, 11);
   } catch {
-    const match = url.match(/(?:youtu\.be\/|v\/|u\/\w\/|embed\/|shorts\/|watch\?v=|&v=)([^#&?]*).*/);
-    return match && match[1].length === 11 ? match[1] : null;
+    // fallback regex
   }
+  const match = url.match(/(?:youtu\.be\/|v\/|u\/\w\/|embed\/|shorts\/|live\/|watch\?v=|&v=)([^#&?/\s]{11})/);
+  return match && match[1] ? match[1] : null;
 }
 
 // Format views nicely (e.g. 1.2M, 345K)
@@ -118,59 +155,80 @@ export function formatDuration(seconds: number): string {
 // Fetch YouTube Metadata & Formats
 export async function getYouTubeInfo(url: string): Promise<VideoInfo> {
   const videoId = extractYouTubeId(url) || 'dQw4w9WgXcQ';
-  let title = 'Vídeo do YouTube';
+  let title = `Vídeo do YouTube (${videoId})`;
   let author = 'Canal do YouTube';
-  let authorUrl = `https://www.youtube.com/channel/UC${videoId.slice(0, 8)}`;
+  let authorUrl = `https://www.youtube.com/watch?v=${videoId}`;
   let authorAvatar = `https://api.dicebear.com/7.x/identicon/svg?seed=${videoId}`;
-  const thumbnail = `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
+  const thumbnail = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
   let duration = 214; // Default approx 3m34s
   let views = 1450000;
   let likes = 89000;
 
-  // Try oEmbed for title & author
-  try {
-    const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`, {
-      signal: AbortSignal.timeout(4000),
-    });
-    if (oembedRes.ok) {
-      const data = (await oembedRes.json()) as { title?: string; author_name?: string; author_url?: string };
-      if (data.title) title = data.title;
-      if (data.author_name) author = data.author_name;
-      if (data.author_url) authorUrl = data.author_url;
-    }
-  } catch (err) {
-    console.log('YouTube oEmbed fallback utilized:', err);
+  // 1. Try YouTube official oEmbed for title & author
+  const oembedData = await safeFetchJson<{ title?: string; author_name?: string; author_url?: string }>(
+    `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`,
+    { signal: AbortSignal.timeout(4000) }
+  );
+
+  if (oembedData) {
+    if (oembedData.title) title = oembedData.title;
+    if (oembedData.author_name) author = oembedData.author_name;
+    if (oembedData.author_url) authorUrl = oembedData.author_url;
   }
 
-  // Try public Invidious instances for real duration and views if possible
+  // 2. Try noembed fallback if needed
+  if (title.startsWith('Vídeo do YouTube')) {
+    const noembedData = await safeFetchJson<{ title?: string; author_name?: string; author_url?: string }>(
+      `https://noembed.com/embed?url=https://www.youtube.com/watch?v=${videoId}`,
+      { signal: AbortSignal.timeout(3000) }
+    );
+    if (noembedData) {
+      if (noembedData.title) title = noembedData.title;
+      if (noembedData.author_name) author = noembedData.author_name;
+      if (noembedData.author_url) authorUrl = noembedData.author_url;
+    }
+  }
+
+  // 3. Try fetching YouTube video page directly for metadata tags
   try {
-    const invidiousHosts = ['https://vid.puffyan.us', 'https://invidious.nerdvpn.de', 'https://yewtu.be'];
-    for (const host of invidiousHosts) {
-      try {
-        const invRes = await fetch(`${host}/api/v1/videos/${videoId}`, { signal: AbortSignal.timeout(3000) });
-        if (invRes.ok) {
-          const invData = (await invRes.json()) as {
-            title?: string;
-            author?: string;
-            lengthSeconds?: number;
-            viewCount?: number;
-            likeCount?: number;
-            authorThumbnails?: Array<{ url: string }>;
-          };
-          if (invData.title) title = invData.title;
-          if (invData.author) author = invData.author;
-          if (invData.lengthSeconds) duration = invData.lengthSeconds;
-          if (invData.viewCount) views = invData.viewCount;
-          if (invData.likeCount) likes = invData.likeCount;
-          if (invData.authorThumbnails?.[0]?.url) authorAvatar = invData.authorThumbnails[0].url;
-          break;
+    const pageRes = await fetch(`https://www.youtube.com/watch?v=${videoId}`, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'Accept-Language': 'pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7',
+      },
+      signal: AbortSignal.timeout(4000),
+    });
+
+    if (pageRes.ok) {
+      const html = await pageRes.text();
+      const titleMatch = html.match(/<meta property="og:title" content="(.*?)"/i) || html.match(/<title>(.*?)<\/title>/i);
+      if (titleMatch && titleMatch[1]) {
+        const cleanExtracted = titleMatch[1].replace(' - YouTube', '').replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"').trim();
+        if (cleanExtracted && cleanExtracted !== 'YouTube') {
+          title = cleanExtracted;
         }
-      } catch {
-        // try next host
+      }
+
+      const authorMatch = html.match(/<link itemprop="name" content="(.*?)"/i) || html.match(/<meta property="og:video:tag" content="(.*?)"/i);
+      if (authorMatch && authorMatch[1]) {
+        author = authorMatch[1].replace(/&amp;/g, '&');
+      }
+
+      const durationMatch = html.match(/"approxDurationMs":"(\d+)"/);
+      if (durationMatch && durationMatch[1]) {
+        const parsedSec = Math.round(parseInt(durationMatch[1], 10) / 1000);
+        if (parsedSec > 0) duration = parsedSec;
+      }
+
+      const viewMatch = html.match(/"viewCount":"(\d+)"/);
+      if (viewMatch && viewMatch[1]) {
+        const parsedViews = parseInt(viewMatch[1], 10);
+        if (parsedViews > 0) views = parsedViews;
       }
     }
   } catch {
-    // ignore
+    // Continue gracefully
   }
 
   // Construct high resolution video formats
@@ -334,52 +392,47 @@ export async function getTikTokInfo(url: string): Promise<VideoInfo> {
 
   // Try TikWM API for real TikTok extraction (free public endpoint)
   try {
-    const tikwmRes = await fetch('https://www.tikwm.com/api/', {
+    const tikData = await safeFetchJson<{
+      code: number;
+      data?: {
+        id: string;
+        title?: string;
+        cover?: string;
+        origin_cover?: string;
+        duration?: number;
+        play?: string;
+        hdplay?: string;
+        wmplay?: string;
+        music?: string;
+        music_info?: { title?: string; play?: string };
+        play_count?: number;
+        digg_count?: number;
+        author?: { unique_id?: string; nickname?: string; avatar?: string };
+      };
+    }>('https://www.tikwm.com/api/', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)',
       },
       body: `url=${encodeURIComponent(url)}&count=12&cursor=0&web=1&hd=1`,
       signal: AbortSignal.timeout(5000),
     });
 
-    if (tikwmRes.ok) {
-      const tikData = (await tikwmRes.json()) as {
-        code: number;
-        data?: {
-          id: string;
-          title?: string;
-          cover?: string;
-          origin_cover?: string;
-          duration?: number;
-          play?: string;
-          hdplay?: string;
-          wmplay?: string;
-          music?: string;
-          music_info?: { title?: string; play?: string };
-          play_count?: number;
-          digg_count?: number;
-          author?: { unique_id?: string; nickname?: string; avatar?: string };
-        };
-      };
-
-      if (tikData.code === 0 && tikData.data) {
-        const d = tikData.data;
-        if (d.title) title = d.title;
-        if (d.author?.nickname || d.author?.unique_id) {
-          author = `@${d.author.unique_id || d.author.nickname}`;
-        }
-        if (d.author?.avatar) authorAvatar = d.author.avatar;
-        if (d.cover || d.origin_cover) thumbnail = d.cover || d.origin_cover || thumbnail;
-        if (d.duration) duration = d.duration;
-        if (d.play_count) views = d.play_count;
-        if (d.digg_count) likes = d.digg_count;
-
-        directNoWmUrl = d.hdplay || d.play;
-        directWmUrl = d.wmplay;
-        directAudioUrl = d.music || d.music_info?.play;
+    if (tikData && tikData.code === 0 && tikData.data) {
+      const d = tikData.data;
+      if (d.title) title = d.title;
+      if (d.author?.nickname || d.author?.unique_id) {
+        author = `@${d.author.unique_id || d.author.nickname}`;
       }
+      if (d.author?.avatar) authorAvatar = d.author.avatar;
+      if (d.cover || d.origin_cover) thumbnail = d.cover || d.origin_cover || thumbnail;
+      if (d.duration) duration = d.duration;
+      if (d.play_count) views = d.play_count;
+      if (d.digg_count) likes = d.digg_count;
+
+      directNoWmUrl = d.hdplay || d.play;
+      directWmUrl = d.wmplay;
+      directAudioUrl = d.music || d.music_info?.play;
     }
   } catch (err) {
     console.log('TikWM fallback utilized:', err);
@@ -387,18 +440,18 @@ export async function getTikTokInfo(url: string): Promise<VideoInfo> {
 
   // If still generic, try TikTok oEmbed
   if (title === 'Vídeo do TikTok') {
-    try {
-      const oembedRes = await fetch(`https://www.tiktok.com/oembed?url=${encodeURIComponent(url)}`, {
-        signal: AbortSignal.timeout(3000),
-      });
-      if (oembedRes.ok) {
-        const oData = (await oembedRes.json()) as { title?: string; author_name?: string; author_unique_id?: string; thumbnail_url?: string };
-        if (oData.title) title = oData.title;
-        if (oData.author_name) author = `@${oData.author_unique_id || oData.author_name}`;
-        if (oData.thumbnail_url) thumbnail = oData.thumbnail_url;
-      }
-    } catch {
-      // ignore
+    const oData = await safeFetchJson<{
+      title?: string;
+      author_name?: string;
+      author_unique_id?: string;
+      thumbnail_url?: string;
+    }>(`https://www.tiktok.com/oembed?url=${encodeURIComponent(url)}`, {
+      signal: AbortSignal.timeout(3000),
+    });
+    if (oData) {
+      if (oData.title) title = oData.title;
+      if (oData.author_name) author = `@${oData.author_unique_id || oData.author_name}`;
+      if (oData.thumbnail_url) thumbnail = oData.thumbnail_url;
     }
   }
 
