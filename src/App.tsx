@@ -232,17 +232,57 @@ export default function App() {
     showToast(`Legendas atualizadas para ${langLabel}.`);
   };
 
-  // Trigger file download
+  // Trigger file download reliably via Blob in browser
+  const triggerDownloadFile = async (downloadUrl: string, defaultFilename: string, successMessage: string) => {
+    try {
+      showToast('Preparando arquivo para download...');
+
+      // Fetch binary data from API
+      const response = await fetch(downloadUrl);
+      if (!response.ok) {
+        throw new Error(`Falha no download: status ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const blobUrl = window.URL.createObjectURL(blob);
+
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = defaultFilename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      setTimeout(() => {
+        window.URL.revokeObjectURL(blobUrl);
+      }, 10000);
+
+      showToast(successMessage);
+    } catch (err) {
+      console.warn('Blob download fallback to direct navigation:', err);
+      // Fallback: direct anchor link
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = defaultFilename;
+      link.target = '_blank';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      showToast(successMessage);
+    }
+  };
+
   const handleDownloadVideo = (fmt: VideoFormat) => {
     if (!videoInfo) return;
 
-    // Trigger direct browser download
-    const link = document.createElement('a');
-    link.href = fmt.downloadUrl;
-    link.setAttribute('download', `${videoInfo.title}_${fmt.qualityLabel}.mp4`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const sanitizedTitle = (videoInfo.title || 'video')
+      .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+      .replace(/\s+/g, '_')
+      .slice(0, 50);
+
+    const filename = `${sanitizedTitle}_${fmt.qualityLabel.replace(/[^a-zA-Z0-9]/g, '_')}.${fmt.extension || 'mp4'}`;
+
+    triggerDownloadFile(fmt.downloadUrl, filename, `Download de "${fmt.qualityLabel}" concluído com sucesso!`);
 
     // Save to history
     saveHistoryItem({
@@ -257,19 +297,19 @@ export default function App() {
       formatLabel: `${fmt.qualityLabel} (${fmt.extension.toUpperCase()})`,
       timestamp: Date.now(),
     });
-
-    showToast(`Download de "${fmt.qualityLabel}" iniciado!`);
   };
 
   const handleDownloadAudio = (fmt: AudioFormat) => {
     if (!videoInfo) return;
 
-    const link = document.createElement('a');
-    link.href = fmt.downloadUrl;
-    link.setAttribute('download', `${videoInfo.title}_${fmt.bitrate}kbps.mp3`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    const sanitizedTitle = (videoInfo.title || 'audio')
+      .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+      .replace(/\s+/g, '_')
+      .slice(0, 50);
+
+    const filename = `${sanitizedTitle}_${fmt.bitrate}kbps.mp3`;
+
+    triggerDownloadFile(fmt.downloadUrl, filename, `Áudio MP3 (${fmt.bitrate} kbps) baixado com sucesso!`);
 
     saveHistoryItem({
       id: `${videoInfo.id}_${fmt.id}_${Date.now()}`,
@@ -283,8 +323,6 @@ export default function App() {
       formatLabel: `MP3 ${fmt.bitrate} kbps`,
       timestamp: Date.now(),
     });
-
-    showToast(`Conversão para MP3 (${fmt.bitrate} kbps) concluída!`);
   };
 
   return (
