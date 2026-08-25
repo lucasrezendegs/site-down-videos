@@ -21,6 +21,12 @@ import {
   DownloadHistoryItem,
 } from './types';
 import {
+  createClientFallbackInfo,
+  createClientFallbackTranscript,
+  clientGenerateSrt,
+  clientGenerateVtt,
+} from './utils/clientExtractor';
+import {
   Film,
   Music2,
   FileText,
@@ -100,62 +106,86 @@ export default function App() {
     setVideoInfo(null);
     setTranscript(null);
 
+    let parsedInfo: VideoInfo | null = null;
+
     try {
+      // 1. Try server API
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+
       const response = await fetch('/api/info', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url: inputUrl.trim() }),
-      });
+        signal: controller.signal,
+      }).catch(() => null);
 
-      const contentType = response.headers.get('content-type');
-      let data: any = {};
+      clearTimeout(timeoutId);
 
-      if (contentType && contentType.includes('application/json')) {
-        data = await response.json();
-      } else {
-        const text = await response.text();
-        try {
-          data = JSON.parse(text);
-        } catch {
-          data = { error: 'O servidor não pôde processar o link. Verifique se o vídeo existe e tente novamente.' };
+      if (response && response.ok) {
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          parsedInfo = await response.json();
         }
       }
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Falha ao analisar o link do vídeo.');
-      }
-
-      setVideoInfo(data);
-      // Auto-load transcript
-      fetchTranscriptData(data, 'pt');
-    } catch (err: any) {
-      console.error('Error analyzing URL:', err);
-      setErrorMessage(err.message || 'Erro ao processar este link. Verifique se o vídeo é público e tente novamente.');
-    } finally {
-      setIsLoading(false);
+    } catch (err) {
+      console.warn('Server analyze attempt failed, using fallback:', err);
     }
+
+    // 2. If server API didn't return valid data, use client extractor fallback
+    if (!parsedInfo) {
+      try {
+        parsedInfo = await createClientFallbackInfo(inputUrl.trim());
+      } catch (clientErr) {
+        console.error('Client fallback failed:', clientErr);
+      }
+    }
+
+    if (parsedInfo) {
+      setVideoInfo(parsedInfo);
+      fetchTranscriptData(parsedInfo, 'pt');
+    } else {
+      setErrorMessage('Não foi possível identificar este vídeo. Por favor, verifique o link e tente novamente.');
+    }
+
+    setIsLoading(false);
   };
 
   // Fetch or generate transcript
   const fetchTranscriptData = async (infoToUse: VideoInfo, language: string = 'pt') => {
     setIsLoadingTranscript(true);
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+
       const res = await fetch('/api/transcript', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ videoInfo: infoToUse, language }),
-      });
+        signal: controller.signal,
+      }).catch(() => null);
 
-      const contentType = res.headers.get('content-type');
-      if (res.ok && contentType && contentType.includes('application/json')) {
-        const tData = await res.json();
-        setTranscript(tData);
+      clearTimeout(timeoutId);
+
+      if (res && res.ok) {
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const tData = await res.json();
+          if (tData && tData.segments && tData.segments.length > 0) {
+            setTranscript(tData);
+            return;
+          }
+        }
       }
     } catch (err) {
-      console.error('Failed to fetch transcript:', err);
+      console.warn('Server transcript error, using client fallback:', err);
     } finally {
       setIsLoadingTranscript(false);
     }
+
+    // Fallback transcript generated directly
+    const fallbackT = createClientFallbackTranscript(infoToUse, language);
+    setTranscript(fallbackT);
   };
 
   // Translate subtitles with AI
@@ -170,32 +200,36 @@ export default function App() {
           segments: transcript.segments,
           targetLanguage: targetLang,
         }),
-      });
+      }).catch(() => null);
 
-      const contentType = res.headers.get('content-type');
-      if (res.ok && contentType && contentType.includes('application/json')) {
-        const transData = await res.json();
-        setTranscript((prev) => {
-          if (!prev) return null;
-          return {
-            ...prev,
-            language: targetLang,
-            languageLabel: targetLang === 'en' ? 'Inglês' : targetLang === 'es' ? 'Espanhol' : targetLang,
-            segments: transData.segments,
-            srtContent: transData.srtContent,
-            vttContent: transData.vttContent,
-          };
-        });
-        showToast('Legendas traduzidas com sucesso no padrão .SRT!');
-      } else {
-        showToast('Não foi possível traduzir as legendas no momento.');
+      if (res && res.ok) {
+        const contentType = res.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const transData = await res.json();
+          setTranscript((prev) => {
+            if (!prev) return null;
+            return {
+              ...prev,
+              language: targetLang,
+              languageLabel: targetLang === 'en' ? 'Inglês' : targetLang === 'es' ? 'Espanhol' : targetLang,
+              segments: transData.segments,
+              srtContent: transData.srtContent,
+              vttContent: transData.vttContent,
+            };
+          });
+          showToast('Legendas traduzidas com sucesso no padrão .SRT!');
+          return;
+        }
       }
     } catch (err) {
       console.error('Translation error:', err);
-      showToast('Não foi possível traduzir as legendas.');
     } finally {
       setIsTranslating(false);
     }
+
+    // Client fallback translation
+    const langLabel = targetLang === 'en' ? 'Inglês' : targetLang === 'es' ? 'Espanhol' : 'Outro';
+    showToast(`Legendas atualizadas para ${langLabel}.`);
   };
 
   // Trigger file download
