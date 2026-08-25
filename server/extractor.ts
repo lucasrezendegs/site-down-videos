@@ -603,8 +603,10 @@ Retorne EXCLUSIVAMENTE um objeto JSON válido no seguinte formato:
   ]
 }`;
 
-      const response = await gemini.models.generateContent({
-        model: 'gemini-3.7-flash',
+      // 5-second timeout for AI generation
+      const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000));
+      const aiPromise = gemini.models.generateContent({
+        model: 'gemini-2.5-flash',
         contents: prompt,
         config: {
           responseMimeType: 'application/json',
@@ -612,40 +614,44 @@ Retorne EXCLUSIVAMENTE um objeto JSON válido no seguinte formato:
         },
       });
 
-      const text = response.text?.trim() || '{}';
-      const parsed = JSON.parse(text) as {
-        language?: string;
-        languageLabel?: string;
-        summary?: string;
-        keyPoints?: string[];
-        segments?: Array<{ id: number; start: number; end: number; startTime?: string; endTime?: string; text: string }>;
-      };
+      const response = await Promise.race([aiPromise, timeoutPromise]);
 
-      if (parsed.segments && parsed.segments.length > 0) {
-        const segments: TranscriptSegment[] = parsed.segments.map((seg, i) => ({
-          id: seg.id || i + 1,
-          start: typeof seg.start === 'number' ? seg.start : i * 4,
-          end: typeof seg.end === 'number' ? seg.end : (i + 1) * 4,
-          startTime: seg.startTime || secondsToSrtTime(typeof seg.start === 'number' ? seg.start : i * 4),
-          endTime: seg.endTime || secondsToSrtTime(typeof seg.end === 'number' ? seg.end : (i + 1) * 4),
-          text: seg.text || '',
-        }));
-
-        const srtContent = segmentsToSrt(segments);
-        const vttContent = segmentsToVtt(segments);
-        const rawText = segments.map((s) => s.text).join(' ');
-
-        return {
-          language: parsed.language || requestedLanguage,
-          languageLabel: parsed.languageLabel || (requestedLanguage === 'pt' ? 'Português (Brasil)' : 'Original'),
-          isAiGenerated: true,
-          rawText,
-          srtContent,
-          vttContent,
-          segments,
-          summary: parsed.summary,
-          keyPoints: parsed.keyPoints,
+      if (response && response.text) {
+        const text = response.text.trim() || '{}';
+        const parsed = JSON.parse(text) as {
+          language?: string;
+          languageLabel?: string;
+          summary?: string;
+          keyPoints?: string[];
+          segments?: Array<{ id: number; start: number; end: number; startTime?: string; endTime?: string; text: string }>;
         };
+
+        if (parsed.segments && parsed.segments.length > 0) {
+          const segments: TranscriptSegment[] = parsed.segments.map((seg, i) => ({
+            id: seg.id || i + 1,
+            start: typeof seg.start === 'number' ? seg.start : i * 4,
+            end: typeof seg.end === 'number' ? seg.end : (i + 1) * 4,
+            startTime: seg.startTime || secondsToSrtTime(typeof seg.start === 'number' ? seg.start : i * 4),
+            endTime: seg.endTime || secondsToSrtTime(typeof seg.end === 'number' ? seg.end : (i + 1) * 4),
+            text: seg.text || '',
+          }));
+
+          const srtContent = segmentsToSrt(segments);
+          const vttContent = segmentsToVtt(segments);
+          const rawText = segments.map((s) => s.text).join(' ');
+
+          return {
+            language: parsed.language || requestedLanguage,
+            languageLabel: parsed.languageLabel || (requestedLanguage === 'pt' ? 'Português (Brasil)' : 'Original'),
+            isAiGenerated: true,
+            rawText,
+            srtContent,
+            vttContent,
+            segments,
+            summary: parsed.summary,
+            keyPoints: parsed.keyPoints,
+          };
+        }
       }
     } catch (geminiError) {
       console.error('Gemini transcript generation error:', geminiError);
@@ -732,35 +738,40 @@ Retorne EXCLUSIVAMENTE um array JSON de objetos:
   { "id": 1, "start": 0.0, "end": 3.5, "text": "texto traduzido..." }
 ]`;
 
-    const response = await gemini.models.generateContent({
-      model: 'gemini-3.7-flash',
+    const timeoutPromise = new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000));
+    const aiPromise = gemini.models.generateContent({
+      model: 'gemini-2.5-flash',
       contents: prompt,
       config: {
         responseMimeType: 'application/json',
       },
     });
 
-    const parsed = JSON.parse(response.text?.trim() || '[]') as Array<{ id: number; start: number; end: number; text: string }>;
-    if (Array.isArray(parsed) && parsed.length > 0) {
-      const translatedSegments: TranscriptSegment[] = parsed.map((item, i) => {
-        const orig = segments[i] || segments[0];
-        const start = typeof item.start === 'number' ? item.start : orig.start;
-        const end = typeof item.end === 'number' ? item.end : orig.end;
-        return {
-          id: item.id || i + 1,
-          start,
-          end,
-          startTime: secondsToSrtTime(start),
-          endTime: secondsToSrtTime(end),
-          text: item.text || orig.text,
-        };
-      });
+    const response = await Promise.race([aiPromise, timeoutPromise]);
 
-      return {
-        segments: translatedSegments,
-        srtContent: segmentsToSrt(translatedSegments),
-        vttContent: segmentsToVtt(translatedSegments),
-      };
+    if (response && response.text) {
+      const parsed = JSON.parse(response.text.trim() || '[]') as Array<{ id: number; start: number; end: number; text: string }>;
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const translatedSegments: TranscriptSegment[] = parsed.map((item, i) => {
+          const orig = segments[i] || segments[0];
+          const start = typeof item.start === 'number' ? item.start : orig.start;
+          const end = typeof item.end === 'number' ? item.end : orig.end;
+          return {
+            id: item.id || i + 1,
+            start,
+            end,
+            startTime: secondsToSrtTime(start),
+            endTime: secondsToSrtTime(end),
+            text: item.text || orig.text,
+          };
+        });
+
+        return {
+          segments: translatedSegments,
+          srtContent: segmentsToSrt(translatedSegments),
+          vttContent: segmentsToVtt(translatedSegments),
+        };
+      }
     }
   } catch (err) {
     console.error('Translation error:', err);
