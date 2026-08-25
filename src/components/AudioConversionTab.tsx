@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Music, Download, Check, Volume2, Play, Pause, Disc, Sparkles, Sliders, ExternalLink, Zap, ShieldCheck } from 'lucide-react';
+import { Music, Download, Check, Volume2, Play, Pause, Disc, Sparkles, Sliders, Zap, ShieldCheck } from 'lucide-react';
 import { VideoInfo, AudioFormat } from '../types';
 
 interface AudioConversionTabProps {
@@ -28,22 +28,14 @@ export const AudioConversionTab: React.FC<AudioConversionTabProps> = ({ video, o
     setTimeout(() => {
       setDownloadingId(null);
       setDownloadedIds((prev) => ({ ...prev, [fmt.id]: true }));
-    }, 1500);
+    }, 2000);
   };
 
   const togglePlayAudio = () => {
     setIsPlayingAudio(!isPlayingAudio);
   };
 
-  // Direct conversion mirror links for the real video
   const isYouTube = video.platform === 'youtube';
-  const realMp3MirrorUrl = isYouTube
-    ? `https://tomp3.cc/youtube-to-mp3/${video.id}`
-    : `https://ssstik.io/pt`;
-
-  const realSecondaryMirrorUrl = isYouTube
-    ? `https://www.y2mate.com/youtube-mp3/${video.id}`
-    : `https://snaptik.app/`;
 
   return (
     <div className="space-y-6">
@@ -161,41 +153,6 @@ export const AudioConversionTab: React.FC<AudioConversionTabProps> = ({ video, o
               />
             );
           })}
-        </div>
-      </div>
-
-      {/* Direct Converter Mirror Box for guaranteed genuine 320kbps MP3 */}
-      <div className="p-4 rounded-xl bg-gradient-to-r from-amber-950/30 via-zinc-900 to-zinc-900 border border-amber-500/20 flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <Zap className="w-5 h-5 text-amber-400 flex-shrink-0" />
-          <div>
-            <h4 className="text-sm font-bold text-zinc-100">Servidor Rápido de Conversão Direta (MP3 Oficial)</h4>
-            <p className="text-xs text-zinc-400">
-              Extraia a faixa de áudio original exata do vídeo sem nenhuma compressão adicional.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <a
-            href={realMp3MirrorUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex-1 sm:flex-none px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 text-xs font-bold flex items-center justify-center gap-1.5 transition-colors shadow-md"
-          >
-            <span>Converter MP3 no Servidor 1</span>
-            <ExternalLink className="w-3.5 h-3.5" />
-          </a>
-
-          <a
-            href={realSecondaryMirrorUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex-1 sm:flex-none px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors border border-zinc-700"
-          >
-            <span>Servidor 2</span>
-            <ExternalLink className="w-3.5 h-3.5" />
-          </a>
         </div>
       </div>
 

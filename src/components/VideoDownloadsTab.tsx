@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Download, Check, Sparkles, Film, HardDrive, Zap, ShieldCheck, ExternalLink, Play } from 'lucide-react';
+import { Download, Check, Film, HardDrive, Zap, ShieldCheck, Play } from 'lucide-react';
 import { VideoInfo, VideoFormat } from '../types';
 
 interface VideoDownloadsTabProps {
@@ -15,24 +15,14 @@ export const VideoDownloadsTab: React.FC<VideoDownloadsTabProps> = ({ video, onD
     setDownloadingId(format.id);
     onDownload(format, 'video');
 
-    // Simulate direct browser download trigger
     setTimeout(() => {
       setDownloadingId(null);
       setDownloadedIds((prev) => ({ ...prev, [format.id]: true }));
-    }, 1500);
+    }, 2000);
   };
 
-  const isYouTube = video.platform === 'youtube';
+  const isTikTok = video.platform === 'tiktok';
   const bestFormat = video.formats[0];
-
-  // Direct fast download mirrors for 100% genuine video file
-  const serverMirror1 = isYouTube
-    ? `https://www.ssyoutube.com/watch?v=${video.id}`
-    : `https://ssstik.io/pt`;
-
-  const serverMirror2 = isYouTube
-    ? `https://y2mate.is/watch?v=${video.id}`
-    : `https://snaptik.app/`;
 
   return (
     <div className="space-y-6">
@@ -46,7 +36,7 @@ export const VideoDownloadsTab: React.FC<VideoDownloadsTabProps> = ({ video, onD
             <div>
               <div className="flex items-center gap-2">
                 <span className="text-xs font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-red-500/20 text-red-300 border border-red-500/30">
-                  {video.platform === 'tiktok' ? 'Sem Marca D\'água' : 'Melhor Qualidade'}
+                  {isTikTok ? 'Sem Marca D\'água' : 'Melhor Qualidade'}
                 </span>
                 <span className="text-xs text-zinc-400 font-mono">{bestFormat.resolution}</span>
               </div>
@@ -80,48 +70,13 @@ export const VideoDownloadsTab: React.FC<VideoDownloadsTabProps> = ({ video, onD
               ) : (
                 <>
                   <Download className="w-4 h-4" />
-                  <span>Baixar em Alta Resolução</span>
+                  <span>{isTikTok ? 'Baixar Vídeo Sem Marca D\'água' : 'Baixar em Alta Resolução'}</span>
                 </>
               )}
             </button>
           </div>
         </div>
       )}
-
-      {/* Direct HD Video Converter Mirrors */}
-      <div className="p-4 rounded-xl bg-gradient-to-r from-red-950/30 via-zinc-900 to-zinc-900 border border-red-500/20 flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <Film className="w-5 h-5 text-red-400 flex-shrink-0" />
-          <div>
-            <h4 className="text-sm font-bold text-zinc-100">Servidor Rápido de Vídeo Original (4K / 1080p / TikTok)</h4>
-            <p className="text-xs text-zinc-400">
-              Acesso direto aos fluxos originais sem restrições de IP ou compressão de rede.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 w-full sm:w-auto">
-          <a
-            href={serverMirror1}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex-1 sm:flex-none px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-bold flex items-center justify-center gap-1.5 transition-colors shadow-md"
-          >
-            <span>Baixar no Servidor 1</span>
-            <ExternalLink className="w-3.5 h-3.5" />
-          </a>
-
-          <a
-            href={serverMirror2}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex-1 sm:flex-none px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors border border-zinc-700"
-          >
-            <span>Servidor 2</span>
-            <ExternalLink className="w-3.5 h-3.5" />
-          </a>
-        </div>
-      </div>
 
       {/* Formats Grid / Table */}
       <div>
@@ -130,7 +85,7 @@ export const VideoDownloadsTab: React.FC<VideoDownloadsTabProps> = ({ video, onD
             <Film className="w-4 h-4 text-red-500" />
             Todos os Formatos e Resoluções Disponíveis:
           </h3>
-          <span className="text-xs text-zinc-400">Áudio e vídeo combinados em alta fidelidade</span>
+          <span className="text-xs text-zinc-400">Download direto 100% pelo site</span>
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">

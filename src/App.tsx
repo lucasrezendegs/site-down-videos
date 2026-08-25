@@ -233,7 +233,7 @@ export default function App() {
     showToast(`Legendas atualizadas para ${langLabel}.`);
   };
 
-  // Trigger file download reliably
+  // Trigger file download 100% inside the app via our backend download stream
   const triggerDownloadFile = async (
     downloadUrl: string,
     defaultFilename: string,
@@ -242,64 +242,28 @@ export default function App() {
     title: string = 'media'
   ) => {
     try {
-      showToast('Iniciando processamento do arquivo...');
+      showToast('Iniciando download do arquivo diretamente pelo site...');
 
-      let blob: Blob | null = null;
+      // Direct in-app stream download
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = defaultFilename;
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
 
-      // Try fetching from server stream
-      try {
-        const response = await fetch(downloadUrl);
-        const contentType = response.headers.get('content-type') || '';
-        if (response.ok && (contentType.includes('video') || contentType.includes('audio') || contentType.includes('octet-stream'))) {
-          const fetchedBlob = await response.blob();
-          if (fetchedBlob.size > 20000) {
-            blob = fetchedBlob;
-          }
+      setTimeout(() => {
+        try {
+          document.body.removeChild(link);
+        } catch {
+          // ignore
         }
-      } catch (netErr) {
-        console.warn('Direct server fetch unavailable:', netErr);
-      }
+      }, 3000);
 
-      if (blob) {
-        const blobUrl = window.URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = blobUrl;
-        link.download = defaultFilename;
-        link.style.display = 'none';
-        document.body.appendChild(link);
-        link.click();
-
-        setTimeout(() => {
-          try {
-            document.body.removeChild(link);
-            window.URL.revokeObjectURL(blobUrl);
-          } catch {
-            // ignore
-          }
-        }, 5000);
-
-        showToast(successMessage);
-      } else {
-        // Direct mirror download fallback
-        const isYouTube = videoInfo?.platform === 'youtube';
-        const fallbackUrl = isYouTube
-          ? (mediaType === 'audio'
-              ? `https://tomp3.cc/youtube-to-mp3/${videoInfo?.id}`
-              : `https://www.ssyoutube.com/watch?v=${videoInfo?.id}`)
-          : (mediaType === 'audio' ? `https://ssstik.io/pt` : `https://snaptik.app/`);
-
-        const link = document.createElement('a');
-        link.href = fallbackUrl;
-        link.target = '_blank';
-        link.rel = 'noopener noreferrer';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        showToast('Abrindo servidor de download direto com o arquivo original...');
-      }
+      showToast(successMessage);
     } catch (err) {
       console.warn('Download handler error:', err);
-      showToast('Abrindo link direto de download...');
+      showToast('Erro ao processar download.');
     }
   };
 

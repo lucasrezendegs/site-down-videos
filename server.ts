@@ -97,10 +97,10 @@ async function startServer() {
     }
   });
 
-  // API: Download Proxy & Stream handler with standard Content-Disposition headers
+  // API: Download Proxy & Stream handler with standard Content-Disposition headers (100% in-app)
   app.get('/api/download', async (req: Request, res: Response) => {
     try {
-      const { url, streamUrl, format, type = 'video', ext, title = 'clipflow_media' } = req.query as Record<string, string>;
+      const { url, streamUrl, format, type = 'video', ext, title = 'clipflow_media', nowm } = req.query as Record<string, string>;
 
       const cleanTitle = (title || 'video')
         .replace(/[/\\?%*:|"<>]/g, '')
@@ -111,12 +111,12 @@ async function startServer() {
       const filename = `${cleanTitle}${format ? `_${format}` : ''}.${fileExt}`;
       const safeAscii = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
 
-      // 1. Direct stream URL (e.g. from TikTok CDN)
+      // 1. Direct stream URL provided (e.g. TikTok CDN stream)
       if (streamUrl && streamUrl.startsWith('http')) {
         try {
           const fetchStream = await fetch(streamUrl, {
             headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
               Referer: 'https://www.tiktok.com/',
             },
           });
@@ -146,7 +146,63 @@ async function startServer() {
         }
       }
 
-      // 2. If running locally with yt-dlp available, stream genuine media
+      // 2. If it is a TikTok URL, attempt real-time TikTok direct CDN resolution
+      if (url && (url.includes('tiktok.com') || url.includes('douyin.com'))) {
+        try {
+          const tikRes = await fetch('https://www.tikwm.com/api/', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            },
+            body: `url=${encodeURIComponent(url)}&hd=1`,
+            signal: AbortSignal.timeout(6000),
+          });
+
+          if (tikRes.ok) {
+            const tikData = await tikRes.json();
+            if (tikData && tikData.code === 0 && tikData.data) {
+              const directMediaUrl = type === 'audio'
+                ? (tikData.data.music || tikData.data.music_info?.play)
+                : (tikData.data.hdplay || tikData.data.play);
+
+              if (directMediaUrl && directMediaUrl.startsWith('http')) {
+                const cdnStream = await fetch(directMediaUrl, {
+                  headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    Referer: 'https://www.tiktok.com/',
+                  },
+                });
+
+                if (cdnStream.ok && cdnStream.body) {
+                  res.setHeader('Access-Control-Allow-Origin', '*');
+                  res.setHeader('Content-Type', type === 'audio' ? 'audio/mpeg' : 'video/mp4');
+                  res.setHeader('Content-Disposition', `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+                  const contentLength = cdnStream.headers.get('content-length');
+                  if (contentLength) res.setHeader('Content-Length', contentLength);
+
+                  const reader = cdnStream.body.getReader();
+                  const pump = async () => {
+                    const { done, value } = await reader.read();
+                    if (done) {
+                      res.end();
+                      return;
+                    }
+                    res.write(value);
+                    await pump();
+                  };
+                  await pump();
+                  return;
+                }
+              }
+            }
+          }
+        } catch (tikErr) {
+          console.log('TikTok dynamic resolution error:', tikErr);
+        }
+      }
+
+      // 3. If running locally with yt-dlp available, stream genuine media directly
       if (url && url.startsWith('http')) {
         try {
           const ytdlpArgs = type === 'audio'
@@ -156,23 +212,30 @@ async function startServer() {
           const ytdlp = spawn('yt-dlp', ytdlpArgs);
           let hasOutput = false;
 
-          ytdlp.stdout.once('data', () => {
+          ytdlp.stdout.once('data', (chunk) => {
             hasOutput = true;
             res.setHeader('Access-Control-Allow-Origin', '*');
             res.setHeader('Content-Type', type === 'audio' ? 'audio/mpeg' : 'video/mp4');
             res.setHeader('Content-Disposition', `attachment; filename="${safeAscii}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
+            res.write(chunk);
           });
 
-          ytdlp.stdout.pipe(res);
+          ytdlp.stdout.on('data', (chunk) => {
+            if (hasOutput) {
+              res.write(chunk);
+            }
+          });
 
-          ytdlp.on('error', () => {
+          ytdlp.stdout.on('end', () => {
+            if (hasOutput) {
+              res.end();
+            }
+          });
+
+          ytdlp.on('error', (spawnError) => {
+            console.log('yt-dlp error:', spawnError);
             if (!hasOutput && !res.headersSent) {
-              // Redirect to verified converter mirror
-              const isYouTube = url.includes('youtu');
-              const redirectUrl = isYouTube
-                ? (type === 'audio' ? `https://tomp3.cc/youtube-to-mp3/${encodeURIComponent(url)}` : `https://www.ssyoutube.com/watch?v=${encodeURIComponent(url)}`)
-                : `https://ssstik.io/pt`;
-              res.redirect(302, redirectUrl);
+              res.status(500).json({ error: 'Processamento indisponível para este vídeo no momento.' });
             }
           });
 
@@ -185,13 +248,9 @@ async function startServer() {
         }
       }
 
-      // 3. Fallback redirect to direct high-speed converter
-      const isYouTube = url ? url.includes('youtu') : false;
-      const redirectUrl = isYouTube
-        ? (type === 'audio' ? `https://tomp3.cc/youtube-to-mp3/${encodeURIComponent(url || '')}` : `https://www.ssyoutube.com/watch?v=${encodeURIComponent(url || '')}`)
-        : `https://ssstik.io/pt`;
-
-      res.redirect(302, redirectUrl);
+      if (!res.headersSent) {
+        res.status(404).json({ error: 'Fluxo de mídia não encontrado para este link.' });
+      }
     } catch (err) {
       console.error('Download error:', err);
       if (!res.headersSent) {
