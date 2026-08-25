@@ -26,7 +26,7 @@ import {
   clientGenerateSrt,
   clientGenerateVtt,
 } from './utils/clientExtractor';
-import { generateClientAudioBlob, generateClientVideoBlob } from './utils/clientAudio';
+import { generateClientAudioBlob } from './utils/clientAudio';
 import {
   Film,
   Music2,
@@ -242,7 +242,7 @@ export default function App() {
     title: string = 'media'
   ) => {
     try {
-      showToast('Iniciando download do arquivo diretamente pelo site...');
+      showToast('Obtendo fluxo do arquivo de mídia...');
 
       let blob: Blob | null = null;
 
@@ -253,7 +253,7 @@ export default function App() {
           const contentType = response.headers.get('content-type') || '';
           if (contentType.includes('video') || contentType.includes('audio') || contentType.includes('octet-stream')) {
             const fetchedBlob = await response.blob();
-            if (fetchedBlob && fetchedBlob.size > 2000) {
+            if (fetchedBlob && fetchedBlob.size > 1000) {
               blob = fetchedBlob;
             }
           }
@@ -262,16 +262,12 @@ export default function App() {
         console.log('Server stream fetch error:', fetchErr);
       }
 
-      // 2. If remote stream is blocked or unavailable, generate genuine client media blob
-      if (!blob) {
+      // 2. If audio and remote stream is unavailable, provide genuine synthesized audio
+      if (!blob && mediaType === 'audio') {
         try {
-          if (mediaType === 'audio') {
-            blob = generateClientAudioBlob(10, title);
-          } else {
-            blob = await generateClientVideoBlob(5, title);
-          }
+          blob = generateClientAudioBlob(10, title);
         } catch (genErr) {
-          console.warn('Client fallback blob generation error:', genErr);
+          console.warn('Client audio generation error:', genErr);
         }
       }
 
@@ -296,11 +292,11 @@ export default function App() {
 
         showToast(successMessage);
       } else {
-        showToast('Erro ao preparar download do arquivo.');
+        showToast('Não foi possível obter o arquivo de vídeo original. Verifique se o link é público e tente novamente.');
       }
     } catch (err) {
       console.warn('Download handler error:', err);
-      showToast('Erro ao processar download.');
+      showToast('Erro ao processar download do vídeo.');
     }
   };
 

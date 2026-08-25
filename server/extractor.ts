@@ -377,6 +377,12 @@ export async function getYouTubeInfo(url: string): Promise<VideoInfo> {
   };
 }
 
+// In-memory cache for direct media CDN streams to avoid rate limits
+export const mediaDirectUrlCache = new Map<
+  string,
+  { videoNoWm?: string; videoWm?: string; audio?: string; title?: string; timestamp: number }
+>();
+
 // Fetch TikTok Metadata & Formats (with No Watermark / Watermark & MP3)
 export async function getTikTokInfo(url: string): Promise<VideoInfo> {
   let title = 'Vídeo do TikTok';
@@ -413,9 +419,10 @@ export async function getTikTokInfo(url: string): Promise<VideoInfo> {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
       },
-      body: `url=${encodeURIComponent(url)}&count=12&cursor=0&web=1&hd=1`,
-      signal: AbortSignal.timeout(5000),
+      body: `url=${encodeURIComponent(url)}&hd=1`,
+      signal: AbortSignal.timeout(6000),
     });
 
     if (tikData && tikData.code === 0 && tikData.data) {
@@ -433,9 +440,23 @@ export async function getTikTokInfo(url: string): Promise<VideoInfo> {
       directNoWmUrl = d.hdplay || d.play;
       directWmUrl = d.wmplay;
       directAudioUrl = d.music || d.music_info?.play;
+
+      if (directNoWmUrl || directWmUrl || directAudioUrl) {
+        const cacheEntry = {
+          videoNoWm: directNoWmUrl,
+          videoWm: directWmUrl,
+          audio: directAudioUrl,
+          title,
+          timestamp: Date.now(),
+        };
+        mediaDirectUrlCache.set(url, cacheEntry);
+        // Also cache without query params
+        const cleanU = url.split('?')[0];
+        mediaDirectUrlCache.set(cleanU, cacheEntry);
+      }
     }
   } catch (err) {
-    console.log('TikWM fallback utilized:', err);
+    console.log('TikWM extraction error:', err);
   }
 
   // If still generic, try TikTok oEmbed

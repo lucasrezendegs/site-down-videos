@@ -10,6 +10,7 @@ import {
   generateTranscript,
   translateSubtitlesWithAi,
   secondsToSrtTime,
+  mediaDirectUrlCache,
 } from './server/extractor';
 import { VideoInfo } from './src/types';
 
@@ -145,6 +146,19 @@ async function startServer() {
           if (success) return;
         } catch (streamErr) {
           console.log('Direct stream fetch error:', streamErr);
+        }
+      }
+
+      // 2. Check in-memory cache of extracted direct CDN URLs
+      if (url) {
+        const cleanU = url.split('?')[0];
+        const cached = mediaDirectUrlCache.get(url) || mediaDirectUrlCache.get(cleanU);
+        if (cached) {
+          const directMediaUrl = type === 'audio' ? cached.audio : (nowm === 'true' ? cached.videoNoWm : (cached.videoNoWm || cached.videoWm));
+          if (directMediaUrl && directMediaUrl.startsWith('http')) {
+            const success = await sendStreamToClient(directMediaUrl);
+            if (success) return;
+          }
         }
       }
 

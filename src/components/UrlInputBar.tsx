@@ -56,18 +56,13 @@ export const UrlInputBar: React.FC<UrlInputBarProps> = ({
 
   const sampleLinks = [
     {
-      label: 'YouTube (Tutorial / 4K)',
+      label: 'YouTube (Vídeo / 4K)',
       url: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
       platform: 'youtube',
     },
     {
-      label: 'YouTube Shorts (1080p)',
-      url: 'https://www.youtube.com/shorts/sample123',
-      platform: 'youtube',
-    },
-    {
       label: 'TikTok (Sem Marca D\'água)',
-      url: 'https://www.tiktok.com/@tiktok/video/7123456789012345678',
+      url: 'https://www.tiktok.com/@scout2015/video/6718335390845095173',
       platform: 'tiktok',
     },
   ];
